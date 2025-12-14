@@ -11,8 +11,8 @@ import os
 # Добавляем путь, чтобы пакет `scripts` был виден как модуль
 sys.path.append('/opt/airflow')
 
-from scripts.data_loader import download_titanic_data, save_data_locally, load_data_from_local
-from scripts.data_preprocessor import preprocess_titanic_data
+from scripts.data_loader import download_diabetes_data, save_data_locally, load_data_from_local
+from scripts.data_preprocessor import preprocess_diabetes_data
 
 # Настройка MLflow будет выполнена внутри функций задач
 
@@ -31,7 +31,7 @@ def download_and_log_data():
     try:
         # Пытаемся подключиться к MLflow серверу
         mlflow.set_tracking_uri("http://mlflow:5000")
-        mlflow.set_experiment("titanic_basic_pipeline")
+        mlflow.set_experiment("diabetes_basic_pipeline")
         mlflow_enabled = True
         logging.info("MLflow подключен успешно")
     except Exception as e:
@@ -39,21 +39,21 @@ def download_and_log_data():
         try:
             # Fallback на локальное хранилище с доступными правами
             mlflow.set_tracking_uri("file:///tmp/mlruns")
-            mlflow.set_experiment("titanic_basic_pipeline")
+            mlflow.set_experiment("diabetes_basic_pipeline")
             mlflow_enabled = True
             logging.info("MLflow настроен с локальным хранилищем")
         except Exception as e2:
             logging.warning(f"Не удалось настроить локальное хранилище MLflow: {e2}. Продолжаем без логирования.")
     
     # Загружаем данные
-    train_df, test_df = download_titanic_data()
+    train_df, test_df = download_diabetes_data()
     
     # Логируем в MLflow только если подключение успешно
     if mlflow_enabled:
         try:
             with mlflow.start_run(run_name="data_download"):
                 # Логируем параметры и метрики
-                mlflow.log_param("dataset", "titanic")
+                mlflow.log_param("dataset", "diabetes")
                 mlflow.log_param("source", "github")
                 mlflow.log_metric("train_samples", len(train_df))
                 mlflow.log_metric("test_samples", len(test_df))
@@ -83,14 +83,14 @@ def preprocess_and_log_data():
     mlflow_enabled = False
     try:
         mlflow.set_tracking_uri("http://mlflow:5000")
-        mlflow.set_experiment("titanic_basic_pipeline")
+        mlflow.set_experiment("diabetes_basic_pipeline")
         mlflow_enabled = True
         logging.info("MLflow подключен успешно")
     except Exception as e:
         logging.warning(f"Не удалось подключиться к MLflow серверу: {e}")
         try:
             mlflow.set_tracking_uri("file:///tmp/mlruns")
-            mlflow.set_experiment("titanic_basic_pipeline")
+            mlflow.set_experiment("diabetes_basic_pipeline")
             mlflow_enabled = True
             logging.info("MLflow настроен с локальным хранилищем")
         except Exception as e2:
@@ -100,7 +100,8 @@ def preprocess_and_log_data():
     train_df, test_df = load_data_from_local()
     
     # Предобработка
-    processed_train, processed_test, encoders = preprocess_titanic_data(train_df, test_df)
+    processed_train, processed_test = preprocess_diabetes_data(train_df, test_df)
+
     
     # Логируем в MLflow только если подключение успешно
     if mlflow_enabled:
@@ -129,7 +130,7 @@ def preprocess_and_log_data():
         logging.info(f"Использованные энкодеры: {list(encoders.keys())}")
     
     # Сохраняем обработанные данные
-    save_data_locally(processed_train, processed_test, "/tmp/titanic_processed_final")
+    save_data_locally(processed_train, processed_test, "/tmp/diabetes_processed_final")
     logging.info("Данные успешно обработаны и сохранены")
 
 def log_dataset_summary():
@@ -138,20 +139,20 @@ def log_dataset_summary():
     mlflow_enabled = False
     try:
         mlflow.set_tracking_uri("http://mlflow:5000")
-        mlflow.set_experiment("titanic_basic_pipeline")
+        mlflow.set_experiment("diabetes_basic_pipeline")
         mlflow_enabled = True
         logging.info("MLflow подключен успешно")
     except Exception as e:
         logging.warning(f"Не удалось подключиться к MLflow серверу: {e}")
         try:
             mlflow.set_tracking_uri("file:///tmp/mlruns")
-            mlflow.set_experiment("titanic_basic_pipeline")
+            mlflow.set_experiment("diabetes_basic_pipeline")
             mlflow_enabled = True
             logging.info("MLflow настроен с локальным хранилищем")
         except Exception as e2:
             logging.warning(f"Не удалось настроить локальное хранилище MLflow: {e2}. Продолжаем без логирования.")
     
-    train_df, test_df = load_data_from_local("/tmp/titanic_processed_final")
+    train_df, test_df = load_data_from_local("/tmp/diabetes_processed_final")
     
     # Создаем сводку
     summary = {
@@ -185,21 +186,21 @@ def log_dataset_summary():
 
 # Определяем DAG
 with DAG(
-    'titanic_basic_pipeline',
+    'diabetes_basic_pipeline',
     default_args=default_args,
-    description='Базовый пайплайн для датасета Titanic',
+    description='Базовый пайплайн для датасета diabetes',
     schedule_interval=None,  # Запуск только вручную
     catchup=False,
-    tags=['titanic', 'mlflow', 'kaggle'],
+    tags=['diabetes', 'mlflow', 'kaggle'],
 ) as dag:
 
     download_task = PythonOperator(
-        task_id='download_titanic_data',
+        task_id='download_diabetes_data',
         python_callable=download_and_log_data,
     )
 
     preprocess_task = PythonOperator(
-        task_id='preprocess_titanic_data',
+        task_id='preprocess_diabetes_data',
         python_callable=preprocess_and_log_data,
     )
 
