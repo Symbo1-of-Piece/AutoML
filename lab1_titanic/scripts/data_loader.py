@@ -7,7 +7,7 @@ import json
 def download_titanic_data():
     """Загрузка датасета Titanic с Kaggle API"""
     try:
-        from kaggle.api.kaggle_api_extended import KaggleApi
+        from kaggle.api.n   import KaggleApi
 
         # Пытаемся получить connection из Airflow
         username = None

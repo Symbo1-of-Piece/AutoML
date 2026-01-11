@@ -1,179 +1,106 @@
 import pandas as pd
 import os
 import logging
-import json
+import numpy as np
 
 
-def download_titanic_data():
-    """Загрузка датасета Titanic с Kaggle API"""
+def download_diabetes_data():
+    """Загрузка датасета Diabetes с fallback-логикой (как в Titanic)"""
     try:
-        from kaggle.api.kaggle_api_extended import KaggleApi
+        # === PRIMARY SOURCE ===
+        data_url = "https://raw.githubusercontent.com/plotly/datasets/master/diabetes.csv"
+        logging.info("Пробуем загрузить датасет Diabetes из основного источника")
 
-        # Пытаемся получить connection из Airflow
-        username = None
-        key = None
-        
-        try:
-            from airflow.hooks.base import BaseHook
-            connection = BaseHook.get_connection('kaggle_default')
-            username = connection.login
-            key = connection.password
-            logging.info("Используем Kaggle credentials из Airflow connection")
-        except Exception as e:
-            logging.warning(f"Не удалось получить Kaggle credentials из Airflow connection: {e}")
-            
-        # Fallback на переменные окружения
-        if not username or not key:
-            username = os.environ.get('KAGGLE_USERNAME')
-            key = os.environ.get('KAGGLE_KEY')
-            if username and key:
-                logging.info("Используем Kaggle credentials из переменных окружения")
-            
-        # Fallback на файл .kaggle/kaggle.json
-        if not username or not key:
-            try:
-                kaggle_config_path = '/home/airflow/.kaggle/kaggle.json'
-                if os.path.exists(kaggle_config_path):
-                    with open(kaggle_config_path, 'r') as f:
-                        kaggle_config = json.load(f)
-                        username = kaggle_config.get('username')
-                        key = kaggle_config.get('key')
-                        if username and key:
-                            logging.info("Используем Kaggle credentials из файла конфигурации")
-            except Exception as e:
-                logging.warning(f"Не удалось прочитать файл конфигурации Kaggle: {e}")
-                
-        if not username or not key:
-            raise ValueError("Kaggle credentials не найдены. Проверьте Airflow connection 'kaggle_default', переменные окружения KAGGLE_USERNAME/KAGGLE_KEY или файл .kaggle/kaggle.json")
+        df = pd.read_csv(data_url)
 
-        # Настройка Kaggle API
-        kaggle_dir = '/tmp/.kaggle'
-        os.makedirs(kaggle_dir, exist_ok=True)
+        if df.empty:
+            raise ValueError("Основной источник вернул пустой датасет")
 
-        kaggle_json = {"username": username, "key": key}
-        kaggle_json_path = os.path.join(kaggle_dir, 'kaggle.json')
-        with open(kaggle_json_path, 'w') as f:
-            json.dump(kaggle_json, f)
-        os.chmod(kaggle_json_path, 0o600)
-        
-        os.environ['KAGGLE_CONFIG_DIR'] = kaggle_dir
+        logging.info("Датасет успешно загружен из основного источника")
 
-        api = KaggleApi()
-        api.authenticate()
-
-        # Используем стандартный датасет Titanic от Kaggle
-        competition_name = "titanic"
-        download_path = "/tmp/titanic_data"
-        os.makedirs(download_path, exist_ok=True)
-        
-        # Скачиваем файлы соревнования
-        api.competition_download_files(competition_name, path=download_path, quiet=False)
-        
-        # Распаковываем архив
-        import zipfile
-        zip_path = os.path.join(download_path, f"{competition_name}.zip")
-        if os.path.exists(zip_path):
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(download_path)
-            os.remove(zip_path)  # Удаляем архив после распаковки
-
-        # Ищем файлы train.csv и test.csv
-        train_path = os.path.join(download_path, "train.csv")
-        test_path = os.path.join(download_path, "test.csv")
-        
-        if not os.path.exists(train_path) or not os.path.exists(test_path):
-            # Fallback: ищем любые CSV файлы
-            import glob
-            csv_files = glob.glob(f"{download_path}/*.csv")
-            logging.info(f"Найденные CSV файлы: {csv_files}")
-            
-            if len(csv_files) < 2:
-                raise FileNotFoundError(f"Недостаточно CSV файлов в {download_path}. Найдено: {csv_files}")
-            
-            # Берем первые два файла как train и test
-            train_path = csv_files[0]
-            test_path = csv_files[1]
-            logging.info(f"Используем файлы: train={train_path}, test={test_path}")
-
-        # Загружаем данные
-        train_df = pd.read_csv(train_path)
-        test_df = pd.read_csv(test_path)
-        
-        # Валидация загруженных данных
-        if train_df.empty or test_df.empty:
-            raise ValueError("Один из загруженных файлов пустой")
-        
-        # Проверяем, что в train есть целевая переменная
-        if 'Survived' not in train_df.columns:
-            logging.warning("Колонка 'Survived' не найдена в тренировочных данных")
-
-        logging.info(f"Данные успешно загружены. Train shape: {train_df.shape}, Test shape: {test_df.shape}")
-        logging.info(f"Train columns: {list(train_df.columns)}")
-        logging.info(f"Test columns: {list(test_df.columns)}")
-        
-        return train_df, test_df
+        return split_train_test(df)
 
     except Exception as e:
-        logging.error(f"Ошибка при загрузке данных с Kaggle: {e}")
-        logging.info("Пытаемся создать mock данные для тестирования...")
-        
-        # Создаем простые mock данные для тестирования
-        try:
-            train_df = create_mock_titanic_data(is_train=True)
-            test_df = create_mock_titanic_data(is_train=False)
-            logging.info("Mock данные созданы успешно")
-            return train_df, test_df
-        except Exception as mock_error:
-            logging.error(f"Не удалось создать mock данные: {mock_error}")
-            raise e  # Возвращаем исходную ошибку
+        logging.error(f"Ошибка при загрузке основного датасета: {e}")
+        logging.info("Пробуем fallback: создание mock-данных")
 
-def create_mock_titanic_data(is_train=True, n_samples=100):
-    """Создание mock данных Titanic для тестирования"""
-    import numpy as np
-    
+        try:
+            train_df = create_mock_diabetes_data(is_train=True)
+            test_df = create_mock_diabetes_data(is_train=False)
+            logging.info("Mock-данные Diabetes успешно созданы")
+            return train_df, test_df
+
+        except Exception as mock_error:
+            logging.error(f"Не удалось создать mock-данные: {mock_error}")
+            raise
+
+
+def split_train_test(df, test_ratio=0.2):
+    """Единая логика разбиения"""
+    required_columns = [
+        'Pregnancies', 'Glucose', 'BloodPressure', 'SkinThickness',
+        'Insulin', 'BMI', 'DiabetesPedigreeFunction', 'Age', 'Outcome'
+    ]
+
+    missing_columns = [c for c in required_columns if c not in df.columns]
+    if missing_columns:
+        raise ValueError(f"Отсутствуют обязательные колонки: {missing_columns}")
+
+    test_size = int(len(df) * test_ratio)
+    test_df = df.tail(test_size).copy()
+    train_df = df.head(len(df) - test_size).copy()
+
+    if 'Outcome' in test_df.columns:
+        test_df = test_df.drop('Outcome', axis=1)
+
+    logging.info(
+        f"Данные подготовлены. "
+        f"Train shape: {train_df.shape}, Test shape: {test_df.shape}"
+    )
+
+    return train_df, test_df
+
+
+def create_mock_diabetes_data(is_train=True, n_samples=100):
+    """Mock-данные Diabetes (полный аналог mock Titanic)"""
     np.random.seed(42)
-    
+
     data = {
-        'PassengerId': range(1, n_samples + 1),
-        'Pclass': np.random.choice([1, 2, 3], n_samples),
-        'Sex': np.random.choice(['male', 'female'], n_samples),
-        'Age': np.random.normal(30, 15, n_samples),
-        'SibSp': np.random.choice([0, 1, 2, 3], n_samples, p=[0.6, 0.2, 0.15, 0.05]),
-        'Parch': np.random.choice([0, 1, 2, 3], n_samples, p=[0.7, 0.15, 0.1, 0.05]),
-        'Fare': np.random.exponential(30, n_samples),
-        'Embarked': np.random.choice(['S', 'C', 'Q'], n_samples, p=[0.7, 0.2, 0.1])
+        'Pregnancies': np.random.randint(0, 10, n_samples),
+        'Glucose': np.random.normal(120, 30, n_samples).clip(50, 200),
+        'BloodPressure': np.random.normal(70, 10, n_samples).clip(40, 120),
+        'SkinThickness': np.random.normal(25, 8, n_samples).clip(5, 60),
+        'Insulin': np.random.normal(100, 40, n_samples).clip(10, 300),
+        'BMI': np.random.normal(30, 6, n_samples).clip(15, 60),
+        'DiabetesPedigreeFunction': np.random.uniform(0.1, 2.5, n_samples),
+        'Age': np.random.randint(21, 70, n_samples),
     }
-    
-    # Добавляем целевую переменную только для тренировочных данных
+
     if is_train:
-        # Простая логика: женщины и пассажиры 1 класса выживают чаще
-        survival_prob = np.where(
-            (data['Sex'] == 'female') | (data['Pclass'] == 1), 
-            0.7, 0.3
-        )
-        data['Survived'] = np.random.binomial(1, survival_prob, n_samples)
-    
+        # простая логика генерации таргета
+        prob = (
+            (data['Glucose'] > 140).astype(int) +
+            (data['BMI'] > 30).astype(int)
+        ) / 2
+        data['Outcome'] = np.random.binomial(1, prob)
+
     df = pd.DataFrame(data)
-    
-    # Добавляем немного пропущенных значений
-    missing_indices = np.random.choice(n_samples, size=int(n_samples * 0.1), replace=False)
-    df.loc[missing_indices, 'Age'] = np.nan
-    
-    if 'Embarked' in df.columns:
-        missing_embarked = np.random.choice(n_samples, size=2, replace=False)
-        df.loc[missing_embarked, 'Embarked'] = np.nan
-    
+
+    # добавляем "грязь" как в реальных данных
+    for col in ['Glucose', 'BMI', 'Insulin']:
+        idx = np.random.choice(n_samples, size=int(0.1 * n_samples), replace=False)
+        df.loc[idx, col] = 0
+
     return df
 
-def save_data_locally(train_df, test_df, path="/tmp/titanic_processed"):
-    """Сохранение данных для передачи между задачами"""
+
+def save_data_locally(train_df, test_df, path="/tmp/diabetes_processed"):
     os.makedirs(path, exist_ok=True)
     train_df.to_csv(f"{path}/train.csv", index=False)
     test_df.to_csv(f"{path}/test.csv", index=False)
-    
-def load_data_from_local(path="/tmp/titanic_processed"):
-    """Загрузка данных из локального хранилища"""
+
+
+def load_data_from_local(path="/tmp/diabetes_processed"):
     train_df = pd.read_csv(f"{path}/train.csv")
     test_df = pd.read_csv(f"{path}/test.csv")
     return train_df, test_df
-
